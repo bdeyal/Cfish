@@ -342,7 +342,7 @@ void pb_init(const char *bookfile)
   FD fd = open_file(bookfile);
   if (fd != FD_ERR) {
     keycount = file_size(fd) / 16;
-    polyhash = map_file(fd, &mapping);
+    polyhash = (struct PolyHash*) map_file(fd, &mapping);
   }
   close_file(fd);
 

@@ -17,8 +17,9 @@
   You should have received a copy of the GNU General Public License
   along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
-
+#if !defined(_GNU_SOURCE)
 #define _GNU_SOURCE
+#endif
 
 #include <inttypes.h>
 #include <stdio.h>
@@ -139,7 +140,7 @@ void tt_allocate(size_t mbSize)
   return;
 
 failed:
-  fprintf(stderr, "Failed to allocate %"PRIu64"MB for "
+  fprintf(stderr, "Failed to allocate %" PRIu64 "MB for "
                   "transposition table.\n", (uint64_t)mbSize);
   exit(EXIT_FAILURE);
 }
