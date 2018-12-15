@@ -127,7 +127,7 @@ void print_pos(Pos *pos)
     printf(" |\n +---+---+---+---+---+---+---+---+\n");
   }
 
-  printf("\nFen: %s\nKey: %16"PRIX64"\nCheckers: ", fen, pos_key());
+  printf("\nFen: %s\nKey: %16" PRIX64 "\nCheckers: ", fen, pos_key());
 
   char buf[16];
   for (Bitboard b = pos_checkers(); b; )
@@ -228,7 +228,7 @@ void pos_set(Pos *pos, char *fen, int isChess960)
   Square sq = SQ_A8;
 
   Stack *st = pos->st;
-  memset(pos, 0, offsetof(Pos, moveList));
+  memset((void*)pos, 0, offsetof(Pos, moveList));
   pos->st = st;
   memset(st, 0, StateSize);
 #ifdef PEDANTIC
