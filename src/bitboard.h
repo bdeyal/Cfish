@@ -58,7 +58,6 @@ extern uint8_t SquareDistance[64][64];
 extern Bitboard SquareBB[64];
 extern Bitboard FileBB[8];
 extern Bitboard RankBB[8];
-extern Bitboard AdjacentFilesBB[8];
 extern Bitboard ForwardRanksBB[2][8];
 extern Bitboard BetweenBB[64][64];
 extern Bitboard LineBB[64][64];
@@ -146,10 +145,10 @@ INLINE Bitboard shift_bb(int Direction, Bitboard b)
 }
 
 
-// double_pawn_attacks_bb() returns the pawn attacks for the given color
+// pawn_double_attacks_bb() returns the pawn attacks for the given color
 // from the squares in the given bitboard.
 
-INLINE Bitboard double_pawn_attacks_bb(Bitboard b, const int C)
+INLINE Bitboard pawn_double_attacks_bb(Bitboard b, const int C)
 {
   return C == WHITE ? shift_bb(NORTH_WEST, b) & shift_bb(NORTH_EAST, b)
                     : shift_bb(SOUTH_WEST, b) & shift_bb(SOUTH_EAST, b);
@@ -161,7 +160,7 @@ INLINE Bitboard double_pawn_attacks_bb(Bitboard b, const int C)
 
 INLINE Bitboard adjacent_files_bb(unsigned f)
 {
-  return AdjacentFilesBB[f];
+  return shift_bb(EAST, FileBB[f]) | shift_bb(WEST, FileBB[f]);
 }
 
 

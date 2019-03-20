@@ -67,11 +67,11 @@ INLINE int futility_margin(Depth d, int improving) {
 
 // Futility and reductions lookup tables, initialized at startup
 static int FutilityMoveCounts[2][16]; // [improving][depth]
-static int Reductions[2][2][64][64];  // [pv][improving][depth][moveNumber]
+static int Reductions[2][64][64];  // [pv][improving][depth][moveNumber]
 
 INLINE Depth reduction(int i, Depth d, int mn, const int NT)
 {
-  return Reductions[NT][i][min(d / ONE_PLY, 63)][min(mn, 63)] * ONE_PLY;
+  return (Reductions[i][min(d / ONE_PLY, 63)][min(mn, 63)] - NT) * ONE_PLY;
 }
 
 // History and stats update bonus, based on depth
@@ -133,17 +133,16 @@ void search_init(void)
       for (int mc = 1; mc < 64; ++mc) {
         double r = log(d) * log(mc) / 1.95;
 
-        Reductions[NonPV][imp][d][mc] = ((int)lround(r));
-        Reductions[PV][imp][d][mc] = max(Reductions[NonPV][imp][d][mc] - 1, 0);
+        Reductions[imp][d][mc] = ((int)lround(r));
 
         // Increase reduction for non-PV nodes when eval is not improving
         if (!imp && r > 1.0)
-          Reductions[NonPV][imp][d][mc]++;
+          Reductions[imp][d][mc]++;
       }
 
   for (int d = 0; d < 16; ++d) {
-    FutilityMoveCounts[0][d] = (int)(2.4 + 0.74 * pow(d, 1.78));
-    FutilityMoveCounts[1][d] = (int)(5.0 + 1.00 * pow(d, 2.00));
+    FutilityMoveCounts[0][d] = (5 + d * d) / 2;
+    FutilityMoveCounts[1][d] = 5 + d * d;
   }
 }
 
@@ -374,15 +373,14 @@ void thread_search(Pos *pos)
   Move lastBestMove = 0;
   Depth lastBestMoveDepth = DEPTH_ZERO;
   double timeReduction = 1.0;
-  bool failedLow;
   int failedHighCnt = 0;
 
-  Stack *ss = pos->st; // At least the fifth element of the allocated array.
-  for (int i = -5; i < 3; i++)
+  Stack *ss = pos->st; // At least the seventh element of the allocated array.
+  for (int i = -7; i < 3; i++)
     memset(SStackBegin(ss[i]), 0, SStackSize);
   (ss-1)->endMoves = pos->moveList;
 
-  for (int i = -5; i < 0; i++)
+  for (int i = -7; i < 0; i++)
     ss[i].history = &(*pos->counterMoveHistory)[0][0]; // Use as sentinel
 
   for (int i = 0; i <= MAX_PLY; i++)
@@ -393,10 +391,8 @@ void thread_search(Pos *pos)
   beta = VALUE_INFINITE;
   pos->completedDepth = DEPTH_ZERO;
 
-  if (pos->threadIdx == 0) {
-    failedLow = false;
+  if (pos->threadIdx == 0)
     mainThread.bestMoveChanges = 0;
-  }
 
   int multiPV = option_value(OPT_MULTI_PV);
 #if 0
@@ -427,10 +423,8 @@ void thread_search(Pos *pos)
     }
 
     // Age out PV variability metric
-    if (pos->threadIdx == 0) {
+    if (pos->threadIdx == 0)
       mainThread.bestMoveChanges *= 0.517;
-      failedLow = false;
-    }
 
     // Save the last iteration's scores before first PV line is searched and
     // all the move scores except the (new) PV are set to -VALUE_INFINITE.
@@ -514,7 +508,6 @@ void thread_search(Pos *pos)
 
           if (pos->threadIdx == 0) {
             failedHighCnt = 0;
-            failedLow = true;
             Signals.stopOnPonderhit = 0;
           }
         } else if (bestValue >= beta) {
@@ -562,35 +555,32 @@ skip_search:
 #endif
 
     // Do we have time for the next iteration? Can we stop searching now?
-    if (use_time_management()) {
-      if (!Signals.stop && !Signals.stopOnPonderhit) {
-        // Stop the search if only one legal move is available, or if all
-        // of the available time has been used.
-        double fallingEval = (306 + 119 * failedLow + 6 * (mainThread.previousScore - bestValue)) / 581.0;
-        fallingEval = max(0.5, min(1.5, fallingEval));
+    if (    use_time_management()
+        && !Signals.stop
+        && !Signals.stopOnPonderhit) {
+      // Stop the search if only one legal move is available, or if all
+      // of the available time has been used.
+      double fallingEval = (306 + 9 * (mainThread.previousScore - bestValue)) / 581.0;
+      fallingEval = max(0.5, min(1.5, fallingEval));
 
-        double bestMoveInstability = 1 + mainThread.bestMoveChanges;
+      // If the best move is stable over several iterations, reduce time
+      // accordingly
+      timeReduction =  lastBestMoveDepth + 10 * ONE_PLY < pos->completedDepth
+                     ? 1.95 : 1.0;
+      double reduction = pow(mainThread.previousTimeReduction, 0.528) / timeReduction;
 
-        // If the best move is stable over several iterations, reduce time
-        // for this move, the longer the move has been stable, the more.
-        // Use part of the time gained from a previous stable move for the
-        // current move.
-        timeReduction = 1;
-        for (int i = 3; i < 6; i++)
-          if (lastBestMoveDepth * i < pos->completedDepth)
-            timeReduction *= 1.25;
-        bestMoveInstability *= pow(mainThread.previousTimeReduction, 0.528) / timeReduction;
+      // Use part of the gained time from a previous stable move for this move
+      double bestMoveInstability = 1.0 + mainThread.bestMoveChanges;
 
-        if (   rm->size == 1
-            || time_elapsed() > time_optimum() * bestMoveInstability * fallingEval)
-        {
-          // If we are allowed to ponder do not stop the search now but
-          // keep pondering until the GUI sends "ponderhit" or "stop".
-          if (Limits.ponder)
-            Signals.stopOnPonderhit = 1;
-          else
-            Signals.stop = 1;
-        }
+      if (   rm->size == 1
+          || time_elapsed() > time_optimum() * fallingEval * reduction * bestMoveInstability)
+      {
+        // If we are allowed to ponder do not stop the search now but
+        // keep pondering until the GUI sends "ponderhit" or "stop".
+        if (Limits.ponder)
+          Signals.stopOnPonderhit = 1;
+        else
+          Signals.stop = 1;
       }
     }
   }
@@ -711,6 +701,9 @@ static void update_cm_stats(Stack *ss, Piece pc, Square s, int bonus)
 
   if (move_is_ok((ss-4)->currentMove))
     cms_update(*(ss-4)->history, pc, s, bonus);
+
+  if (move_is_ok((ss-6)->currentMove))
+    cms_update(*(ss-6)->history, pc, s, bonus);
 }
 
 // update_capture_stats() updates move sorting heuristics when a new capture
@@ -1008,7 +1001,7 @@ void start_thinking(Pos *root)
     }
     memcpy(pos, root, offsetof(Pos, moveList));
     // Copy enough of the root State buffer.
-    int n = max(5, root->st->pliesFromNull);
+    int n = max(7, root->st->pliesFromNull);
     for (int i = 0; i <= n; i++)
       memcpy(&pos->stack[i], &root->st[i - n], StateSize);
     pos->st = pos->stack + n;
